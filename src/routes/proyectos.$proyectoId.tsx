@@ -10,16 +10,30 @@ export const Route = createFileRoute('/proyectos/$proyectoId')({
   loader: async ({ params }) => {
     const sesion = await fnSesionActual()
     if (!sesion.autenticado) throw redirect({ to: '/login' })
-    const { proyecto, clips } = await fnObtenerProyecto({
+    const { proyecto, clips, proceso } = await fnObtenerProyecto({
       data: { proyectoId: params.proyectoId },
     })
-    return { proyecto, clips }
+    return { proyecto, clips, proceso }
   },
   component: LayoutProyecto,
 })
 
+/** "2 min 10 s" / "45 s" */
+function formatearTiempo(segundos: number | null | undefined): string | null {
+  if (segundos === null || segundos === undefined) return null
+  const total = Math.max(0, Math.round(segundos))
+  if (total < 60) return `${total} s`
+  const minutos = Math.floor(total / 60)
+  const resto = total % 60
+  if (minutos < 60) {
+    return resto > 0 ? `${minutos} min ${resto} s` : `${minutos} min`
+  }
+  const horas = Math.floor(minutos / 60)
+  return `${horas} h ${minutos % 60} min`
+}
+
 function LayoutProyecto() {
-  const { proyecto, clips } = Route.useLoaderData()
+  const { proyecto, clips, proceso } = Route.useLoaderData()
   const router = useRouter()
 
   // Mientras el proyecto se procesa, refrescamos los datos periódicamente.
@@ -33,6 +47,7 @@ function LayoutProyecto() {
 
   const minutos = Math.floor(proyecto.duracion_seg / 60)
   const segundos = Math.round(proyecto.duracion_seg % 60)
+  const eta = formatearTiempo(proceso?.etaSegundos)
 
   return (
     <AppShell>
@@ -67,11 +82,48 @@ function LayoutProyecto() {
 
         {proyecto.estado === 'procesando' && (
           <div className="mt-4 rounded-xl border border-amber-400/20 bg-amber-400/[0.06] px-4 py-3.5">
-            <BarraProgreso valor={proyecto.progreso} etapa={proyecto.etapa} />
-            <p className="mt-2 text-[11.5px] leading-snug text-amber-200/80">
-              El análisis y el render se ejecutan en segundo plano. Puedes
-              navegar mientras termina.
-            </p>
+            <div className="mb-2 flex flex-wrap items-center gap-x-3 gap-y-1">
+              <BarraProgreso
+                valor={proceso?.progreso ?? proyecto.progreso}
+                etapa={proceso?.etapa ?? proyecto.etapa}
+              />
+            </div>
+            <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-[11.5px]">
+              {proceso?.clipsTotales ? (
+                <span className="text-mist-400">
+                  <span className="num font-semibold text-mist-200">
+                    {proceso.clipsCompletados}
+                  </span>{' '}
+                  de{' '}
+                  <span className="num font-semibold text-mist-200">
+                    {proceso.clipsTotales}
+                  </span>{' '}
+                  clips listos
+                </span>
+              ) : null}
+              {eta && (
+                <span className="inline-flex items-center gap-1.5 text-amber-200/90">
+                  <svg
+                    viewBox="0 0 24 24"
+                    className="h-3.5 w-3.5"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth={2}
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                  >
+                    <circle cx="12" cy="12" r="9" />
+                    <path d="M12 7v5l3 2" />
+                  </svg>
+                  Tiempo restante estimado:{' '}
+                  <span className="font-semibold">{eta}</span>
+                </span>
+              )}
+              <span className="text-mist-500">
+                Puedes seguir trabajando: los clips aparecen solos conforme
+                terminamos.
+              </span>
+            </div>
             {proyecto.mensaje_error && (
               <p className="mt-1.5 text-[11.5px] text-rose-300">
                 {proyecto.mensaje_error}

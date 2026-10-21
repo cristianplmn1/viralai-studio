@@ -26,7 +26,26 @@ export const fnObtenerProyecto = createServerFn({ method: 'GET' })
       throw new Error('Proyecto no encontrado.')
     }
     const clips = await repo.listarClips(proyecto.id)
-    return { proyecto, clips }
+
+    // Progreso en vivo: tiempo restante y clips ya listos para previsualizar.
+    const { jobDeProyecto } = await import('../pipeline/cola')
+    const job = jobDeProyecto(proyecto.id)
+    const enCurso = job && job.estado !== 'listo' && job.estado !== 'error'
+
+    return {
+      proyecto,
+      clips,
+      proceso: enCurso
+        ? {
+            etapa: job.etapa,
+            progreso: job.progreso,
+            etaSegundos: job.etaSegundos,
+            clipsCompletados: job.clipsCompletados,
+            clipsTotales: job.clipsTotales,
+            clipsListos: job.clipsListos,
+          }
+        : null,
+    }
   })
 
 export const fnEliminarProyecto = createServerFn({ method: 'POST' })

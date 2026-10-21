@@ -343,6 +343,133 @@ async function descargarDirecto(
   }
 }
 
+/* ------------------------------------------------------------------ */
+/* Inspección de un enlace (sin descargar)                              */
+/* ------------------------------------------------------------------ */
+
+/**
+ * Lee los metadatos de un enlace sin bajar el vídeo: título, duración y
+ * miniatura. Sirve para teach-early al usuario lo que va a importar y
+ * cuánto tardará.
+ */
+export async function inspeccionarEnlace(
+  url: string,
+): Promise<MetadatosDescarga & { valido: boolean }> {
+  const binario = ytDlpDisponible()
+  if (!binario) {
+    return {
+      titulo: '',
+      duracion: 0,
+      thumbnail: null,
+      extractor: 'directo',
+      valido: false,
+    }
+  }
+
+  return new Promise((resolve) => {
+    const hijo = spawn(
+      binario,
+      [
+        '--no-playlist',
+        '--no-warnings',
+        '--no-simulate',
+        '--skip-download',
+        '--dump-single-json',
+        url,
+      ],
+      { windowsHide: true },
+    )
+
+    let stdout = ''
+    let stderr = ''
+
+    hijo.stdout.on('data', (trozo: Buffer) => {
+      stdout += trozo.toString('utf8')
+    })
+    hijo.stderr.on('data', (trozo: Buffer) => {
+      stderr += trozo.toString('utf8')
+      if (stderr.length > 20_000) stderr = stderr.slice(-10_000)
+    })
+
+    hijo.on('error', () => {
+      resolve({
+        titulo: '',
+        duracion: 0,
+        thumbnail: null,
+        extractor: 'error',
+        valido: false,
+      })
+    })
+
+    hijo.on('close', (codigo) => {
+      if (codigo !== 0) {
+        const mensaje = /ERROR:\s*(.+)/i.exec(stderr)
+        resolve({
+          titulo: mensaje?.[1]?.trim() ?? '',
+          duracion: 0,
+          thumbnail: null,
+          extractor: 'error',
+          valido: false,
+        })
+        return
+      }
+
+      const linea = stdout
+        .split('\n')
+        .map((l) => l.trim())
+        .find((l) => l.startsWith('{') && l.endsWith('}'))
+      if (!linea) {
+        resolve({
+          titulo: '',
+          duracion: 0,
+          thumbnail: null,
+          extractor: 'error',
+          valido: false,
+        })
+        return
+      }
+
+      try {
+        const datos = JSON.parse(linea) as {
+          title?: string
+          duration?: number
+          thumbnail?: string
+          extractor?: string
+        }
+        resolve({
+          titulo: datos.title ?? '',
+          duracion: Number(datos.duration ?? 0) || 0,
+          thumbnail: datos.thumbnail ?? null,
+          extractor: datos.extractor ?? 'yt-dlp',
+          valido: true,
+        })
+      } catch {
+        resolve({
+          titulo: '',
+          duracion: 0,
+          thumbnail: null,
+          extractor: 'error',
+          valido: false,
+        })
+      }
+    })
+  })
+}
+
+/**
+ * Estimación orientativa del tiempo de proceso a partir de la duración del
+ * vídeo original. Se calibra con las medidas reales del pipeline: el análisis
+ * escala con la duración y cada clip renderizado tiene un coste fijo.
+ */
+export function estimarTiempoProceso(
+  duracionVideo: number,
+  numeroClips: number,
+): number {
+  const analisis = 4 + duracionVideo * 0.32
+  const renders = numeroClips * 3.2
+  return Math.max(8, Math.round(analisis + renders))
+}
+
 export async function existeFichero(ruta: string): Promise<boolean> {
   try {
     const info = await stat(ruta)

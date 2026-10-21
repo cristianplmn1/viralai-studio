@@ -26,6 +26,22 @@ export interface Job {
   actualizado: number
   /** Datos extra del trabajo (por ejemplo, la URL de origen) */
   datos?: Record<string, string>
+  /** Segundos estimados para terminar (null si aún no hay ritmo medido) */
+  etaSegundos: number | null
+  /** Clips ya generados, para la previsualización progresiva */
+  clipsListos: ClipListo[]
+  /** Clips completados y total previsto */
+  clipsCompletados: number
+  clipsTotales: number
+}
+
+export interface ClipListo {
+  id: string
+  url_render: string
+  titulo: string
+  formato: string
+  duracion: number
+  portada: string | null
 }
 
 export interface OpcionesJob {
@@ -74,6 +90,7 @@ function crearJob(
   tipo: TipoJob,
   objetivoId: string,
   datos?: Record<string, string>,
+  clipsTotales = 0,
 ): Job {
   const registroGlobal = registro()
   const job: Job = {
@@ -86,6 +103,10 @@ function crearJob(
     error: null,
     creado: Date.now(),
     actualizado: Date.now(),
+    etaSegundos: null,
+    clipsListos: [],
+    clipsCompletados: 0,
+    clipsTotales,
     ...(datos ? { datos } : {}),
   }
   registroGlobal.jobs.set(job.id, job)
@@ -109,6 +130,14 @@ export function obtenerJob(id: string): Job | null {
 
 export function listarJobs(): Job[] {
   return [...registro().jobs.values()].sort((a, b) => b.creado - a.creado)
+}
+
+/** Trabajo en curso (o el último) de un proyecto. */
+export function jobDeProyecto(proyectoId: string): Job | null {
+  const candidatos = [...registro().jobs.values()]
+    .filter((j) => j.objetivoId === proyectoId)
+    .sort((a, b) => b.creado - a.creado)
+  return candidatos[0] ?? null
 }
 
 function actualizarJob(id: string, patch: Partial<Job>): void {
@@ -288,6 +317,11 @@ async function procesarProyecto(
     const total = momentos.length * formatos.length
     let completados = 0
 
+    // Estimación de tiempo: media real de render por clip.
+    const duraciones: number[] = []
+
+    actualizarJob(job.id, { clipsTotales: total })
+
     const transcripcion = opciones.subtitulos
       ? await transcribir(original)
       : null
@@ -313,6 +347,7 @@ async function procesarProyecto(
           progreso: Math.round(progresoBase),
         })
 
+        const inicioClip = Date.now()
         await renderizarClip(original, {
           formato,
           subtitulos: opciones.subtitulos,
@@ -368,6 +403,38 @@ async function procesarProyecto(
           hashtags: viral.hashtags,
           puntuacion: viral.puntuacion,
           fragmentos: viral.fragmentos,
+        })
+
+        const portadas = await repo.listarPortadas(clip.id)
+
+        // El clip ya está listo: lo publicamos para la previsualización
+        // progresiva y recalculamos el tiempo restante.
+        duraciones.push((Date.now() - inicioClip) / 1000)
+        const media =
+          duraciones.reduce((a, b) => a + b, 0) / Math.max(1, duraciones.length)
+        const restantes = total - (completados + 1)
+
+        const jobActual = registro().jobs.get(job.id)
+        const clipsListos = [
+          ...(jobActual?.clipsListos ?? []),
+          {
+            id: clip.id,
+            url_render: urlRender,
+            titulo: clip.titulo,
+            formato,
+            duracion: Math.round(duracion),
+            portada: portadas[0]?.url_imagen ?? null,
+          },
+        ]
+
+        actualizarJob(job.id, {
+          clipsCompletados: completados + 1,
+          clipsTotales: total,
+          clipsListos,
+          etaSegundos:
+            restantes > 0
+              ? Math.max(1, Math.round(media * restantes))
+              : 0,
         })
 
         completados++

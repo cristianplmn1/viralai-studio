@@ -136,6 +136,20 @@ pegar un enlace
   **HTTP Range**, así que el reproductor puede hacer *seek* sin descargar el
   fichero entero.
 
+### Progreso en vivo
+
+Mientras el pipeline trabaja, la interfaz informa de verdad:
+
+- **Tiempo restante estimado**, calculado con la **media real** de segundos por
+  clip ya renderizado (no una constante inventada): si vas a 12 s por clip y
+  faltan 2, dirá ~24 s.
+- **Previsualización progresiva**: cada clip terminado aparece en la vista del
+  proyecto con su reproductor, junto a marcadores de "Renderizando…" para los
+  que quedan. No hace falta esperar al final para revisar lo ya generado.
+- Antes de empezar, la pantalla de subida **estima el tiempo total** según la
+  duración del vídeo, y en modo enlace un botón *Comprobar enlace* lee el
+  título y la duración reales sin descargar el vídeo.
+
 ### Seguridad de la importación por enlace
 
 El servidor descarga URLs que escribe el usuario, así que está protegido contra
@@ -155,16 +169,34 @@ El servidor descarga URLs que escribe el usuario, así que está protegido contr
 
 ```bash
 npm run dev        # servidor de desarrollo
-npm run build      # build de producción (+ typecheck)
+npm run build      # build de producción (+ typecheck + guardián de fugas)
 npm run preview    # previsualiza el build
 npm start          # sirve el build de producción
 
 npm run typecheck  # tsc --noEmit
+npm run check:cliente # comprueba que ningún módulo de Node llega al navegador
 npm run test:e2e   # prueba de extremo a extremo contra el servidor
 npm run test:enlace # prueba de la importación por enlace (incluye SSRF)
 npm run fixture    # genera fixtures/demo.mp4 (vídeo de prueba)
 npm run tool:yt-dlp # descarga yt-dlp a .tools/
 ```
+
+### El guardián de fugas al cliente
+
+`npm run check:cliente` (y por tanto `npm run build`) recorre el grafo de
+imports desde `src/routes` y `src/components` y falla si algún módulo de Node
+(`node:child_process`, `node:fs`…) puede acabar en el bundle del navegador.
+
+No es un capricho: un `await import('~/server/pipeline/…')` dentro de un
+`loader` de ruta es legal en TypeScript, pero Vite lo convierte en un chunk
+que el navegador pide, y la página revienta con *"Cannot access
+'node:child_process.spawn'"*. Para evitarlo, la comprobación de herramientas
+externas (si hay `yt-dlp`) vive en una **server function**, que el plugin poda
+del cliente.
+
+El guardián distingue el caso: en una server function los `import()` dinámicos
+dentro de los handlers se eliminan del bundle, pero sus imports estáticos de
+primer nivel se quedan.
 
 ### Pruebas de extremo a extremo
 

@@ -1,20 +1,25 @@
 import { createFileRoute, redirect, useNavigate } from '@tanstack/react-router'
-import { useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { AppShell } from '~/components/AppShell'
 import { Dropzone, type ArchivoSeleccionado } from '~/components/Dropzone'
 import { Toggle } from '~/components/Toggle'
 import { AvisoLegal, Panel, Spinner } from '~/components/UI'
 import { fnSesionActual } from '~/server/api/auth'
 import { fnImportarEnlace } from '~/server/api/proyectos'
+import {
+  fnEstadoHerramientas,
+  fnInspeccionarEnlace,
+} from '~/server/api/conexion'
 
 export const Route = createFileRoute('/subir')({
   loader: async () => {
     const sesion = await fnSesionActual()
     if (!sesion.autenticado) throw redirect({ to: '/login' })
-    const { ytDlpDisponible } = await import('~/server/pipeline/descarga')
+    // Server function: el módulo del servidor no entra en el bundle del cliente.
+    const herramientas = await fnEstadoHerramientas()
     return {
       nombre: sesion.usuario.nombre,
-      ytDlp: Boolean(ytDlpDisponible()),
+      ytDlp: herramientas.ytDlp,
     }
   },
   component: PaginaSubir,
@@ -22,6 +27,26 @@ export const Route = createFileRoute('/subir')({
 
 type PlataformaSeleccionada = 'youtube' | 'shorts' | 'tiktok'
 type ModoOrigen = 'fichero' | 'enlace'
+
+/**
+ * Estimación orientativa del proceso, calibrada con las medidas reales del
+ * pipeline: el análisis escala con la duración del vídeo y cada clip
+ * renderizado tiene un coste fijo.
+ */
+function estimarProceso(duracionVideo: number, numeroClips: number): number {
+  const analisis = 4 + duracionVideo * 0.32
+  const renders = numeroClips * 3.2
+  return Math.max(8, Math.round(analisis + renders))
+}
+
+/** "2 min 10 s" / "45 s" */
+function formatearTiempo(segundos: number): string {
+  const total = Math.max(0, Math.round(segundos))
+  if (total < 60) return `${total} s`
+  const minutos = Math.floor(total / 60)
+  const resto = total % 60
+  return resto > 0 ? `${minutos} min ${resto} s` : `${minutos} min`
+}
 
 const PLATAFORMAS: {
   id: PlataformaSeleccionada
@@ -71,6 +96,13 @@ function PaginaSubir() {
   const [subiendo, setSubiendo] = useState(false)
   const [progreso, setProgreso] = useState(0)
   const [error, setError] = useState<string | null>(null)
+  const [inspeccion, setInspeccion] = useState<{
+    titulo: string
+    duracion: number
+    extractor: string
+    estimacionSegundos: number
+  } | null>(null)
+  const [inspeccionando, setInspeccionando] = useState(false)
 
   function alternar(id: PlataformaSeleccionada) {
     setSeleccionadas((previas) =>
@@ -87,6 +119,48 @@ function PaginaSubir() {
       ),
     ),
   )
+
+  /**
+   * Tiempo estimado antes de empezar. Se calcula con la duración real del
+   * vídeo cuando la conocemos (fichero local o enlace inspeccionado) y con
+   * una estimación por defecto si aún no la tenemos.
+   */
+  const estimacionSegundos = useMemo(() => {
+    const duracion =
+      modo === 'enlace'
+        ? (inspeccion?.duracion ?? 120)
+        : (archivo?.duracion ?? 120)
+    return estimarProceso(duracion, maxClips)
+  }, [modo, inspeccion?.duracion, archivo?.duracion, maxClips])
+
+  async function inspeccionar() {
+    if (!url.trim()) {
+      setError('Pega el enlace del vídeo que quieres importar.')
+      return
+    }
+    setInspeccionando(true)
+    setError(null)
+    try {
+      const info = await fnInspeccionarEnlace({ data: { url: url.trim() } })
+      if (!info.valido) {
+        setInspeccion(null)
+        setError(info.error ?? 'No se ha podido leer el enlace.')
+        return
+      }
+      setInspeccion({
+        titulo: info.titulo,
+        duracion: info.duracion,
+        extractor: info.extractor,
+        estimacionSegundos: info.estimacionSegundos ?? 0,
+      })
+    } catch (fallo) {
+      setError(
+        fallo instanceof Error ? fallo.message : 'No se ha podido leer el enlace.',
+      )
+    } finally {
+      setInspeccionando(false)
+    }
+  }
 
   async function importarEnlace() {
     if (!url.trim()) {
@@ -283,6 +357,45 @@ function PaginaSubir() {
                     virales. El título original del vídeo se usa como título
                     del proyecto.
                   </p>
+
+                  <div className="mt-3 flex flex-wrap items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={() => void inspeccionar()}
+                      disabled={inspeccionando || !url.trim()}
+                      className="btn btn-ghost h-9 !px-3.5 !text-[12px]"
+                    >
+                      {inspeccionando ? (
+                        <>
+                          <Spinner />
+                          Leyendo el enlace…
+                        </>
+                      ) : (
+                        'Comprobar enlace'
+                      )}
+                    </button>
+                    {inspeccion && (
+                      <span className="inline-flex flex-wrap items-center gap-2 text-[12px] text-mist-400">
+                        <span className="chip border-brand-500/25 bg-brand-500/10 text-brand-300">
+                          {inspeccion.extractor}
+                        </span>
+                        <span className="num">
+                          {Math.floor(inspeccion.duracion / 60)}:
+                          {String(Math.round(inspeccion.duracion % 60)).padStart(2, '0')}
+                        </span>
+                        <span className="text-mist-500">·</span>
+                        <span className="num text-amber-200/90">
+                          ~{inspeccion.estimacionSegundos} s de proceso
+                        </span>
+                      </span>
+                    )}
+                  </div>
+
+                  {inspeccion?.titulo && (
+                    <p className="mt-2 truncate text-[12.5px] font-medium text-mist-200">
+                      {inspeccion.titulo}
+                    </p>
+                  )}
                   <div className="mt-3 flex flex-wrap gap-1.5">
                     {[
                       'YouTube',
@@ -454,6 +567,14 @@ function PaginaSubir() {
                 <ResumenItem
                   etiqueta="Música"
                   valor={musica ? 'Incluida' : 'Sin música'}
+                />
+                <ResumenItem
+                  etiqueta="Tiempo estimado"
+                  valor={
+                    estimacionSegundos
+                      ? `~${formatearTiempo(estimacionSegundos)}`
+                      : '—'
+                  }
                 />
               </ul>
 

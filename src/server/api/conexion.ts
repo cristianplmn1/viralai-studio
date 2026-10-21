@@ -2,6 +2,46 @@ import { createServerFn } from '@tanstack/react-start'
 import { z } from 'zod'
 import { validar } from './validar'
 
+/**
+ * Lee los metadatos de un enlace (título, duración) sin descargarlo, para
+ * mostrar al usuario qué va a importar y cuánto tardará.
+ */
+export const fnInspeccionarEnlace = createServerFn({ method: 'POST' })
+  .validator(validar(z.object({ url: z.string().min(4) })))
+  .handler(async ({ data }) => {
+    const { validarUrlVideo, inspeccionarEnlace, estimarTiempoProceso } =
+      await import('../pipeline/descarga')
+
+    const validada = await validarUrlVideo(data.url)
+    const info = await inspeccionarEnlace(validada.href)
+
+    return {
+      valido: info.valido,
+      titulo: info.titulo,
+      duracion: info.duracion,
+      extractor: info.extractor,
+      error: info.valido ? null : info.titulo || 'No se ha podido leer el enlace.',
+      estimacionSegundos: info.valido
+        ? estimarTiempoProceso(info.duracion, 3)
+        : null,
+    }
+  })
+
+/**
+ * Estado de las herramientas externas del servidor.
+ *
+ * OJO: esto vive en una server function a propósito. Si un `loader` de ruta
+ * hiciera `await import('~/server/pipeline/descarga')`, Vite metería ese módulo
+ * (y con él `node:child_process`) en el bundle del navegador y la página
+ * reventaría en el cliente. Las server functions sí se podan del cliente.
+ */
+export const fnEstadoHerramientas = createServerFn({ method: 'GET' }).handler(
+  async () => {
+    const { ytDlpDisponible } = await import('../pipeline/descarga')
+    return { ytDlp: Boolean(ytDlpDisponible()) }
+  },
+)
+
 export const fnEstadoConexion = createServerFn({ method: 'GET' }).handler(
   async () => {
     const { sesionVigente, repoDeSesion } = await import('../auth')

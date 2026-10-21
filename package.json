@@ -5,10 +5,11 @@
   "type": "module",
   "scripts": {
     "dev": "vite dev",
-    "build": "vite build && tsc --noEmit",
+    "build": "node scripts/check-fugas-cliente.mjs && vite build && tsc --noEmit",
     "preview": "vite preview",
     "start": "node .output/server/index.mjs",
     "typecheck": "tsc --noEmit",
+    "check:cliente": "node scripts/check-fugas-cliente.mjs",
     "fixture": "node scripts/fixture.mjs",
     "tool:yt-dlp": "node scripts/instalar-ytdlp.mjs",
     "test:e2e": "node scripts/e2e.mjs",

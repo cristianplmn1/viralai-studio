@@ -231,10 +231,16 @@ async function main() {
 
   paso('4. El pipeline se ejecuta en segundo plano (no bloquea)')
   let proyecto = null
+  let proceso = null
+  let clipsDurante = 0
+  let etaVisto = null
   const inicio = Date.now()
   while (Date.now() - inicio < 300_000) {
     const datos = await fn('fnObtenerProyecto', { proyectoId })
     proyecto = datos.proyecto
+    proceso = datos.proceso ?? null
+    clipsDurante = datos.clips.length
+    if (datos.proceso?.etaSegundos != null) etaVisto = datos.proceso.etaSegundos
     process.stdout.write(
       `\r     estado=${proyecto.estado} ${proyecto.progreso}% · ${proyecto.etapa ?? ''}`.padEnd(80),
     )
@@ -244,6 +250,12 @@ async function main() {
   console.log('')
   if (proyecto.estado === 'listo') ok(`proyecto listo en ${Math.round((Date.now() - inicio) / 1000)}s`)
   else fail(`proyecto no listo: ${proyecto.estado} ${proyecto.mensaje_error ?? ''}`)
+
+  if (etaVisto !== null) ok(`tiempo restante estimado durante el proceso: ${etaVisto}s`)
+  else fail('nunca se publicó una estimación de tiempo restante')
+
+  if (clipsDurante > 0) ok(`previsualización progresiva: ${clipsDurante} clip(s) visibles antes de terminar`)
+  else fail('los clips no aparecían hasta terminar todo el proceso')
 
   paso('5. Clips generados')
   const conClips = await fn('fnObtenerProyecto', { proyectoId })
