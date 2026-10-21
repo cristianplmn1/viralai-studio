@@ -27,20 +27,33 @@ export interface ResultadoAnalisis {
 /* Detección de silencios                                               */
 /* ------------------------------------------------------------------ */
 
+/**
+ * Presupuesto de tiempo por paso del análisis. Es una RED DE SEGURIDAD: con
+ * H.264 y `-vn` el análisis va a ~12x tiempo real, así que sólo se agota con
+ * un vídeo patológico. Si se agota, se usan los resultados parciales.
+ */
+const TIMEOUT_ANALISIS_MS = 10 * 60 * 1000
+
 export async function detectarSilencios(
   ruta: string,
   umbralDb = -32,
   duracionMinima = 0.45,
 ): Promise<Intervalo[]> {
-  const { stderr } = await ffmpeg([
-    '-i',
-    ruta,
-    '-af',
-    `silencedetect=noise=${umbralDb}dB:d=${duracionMinima}`,
-    '-f',
-    'null',
-    '-',
-  ])
+  const { stderr } = await ffmpeg(
+    [
+      '-i',
+      ruta,
+      // Sin -vn, ffmpeg decodifica también el vídeo: en AV1 eso multiplica
+      // el tiempo por 70. Sólo queremos el audio.
+      '-vn',
+      '-af',
+      `silencedetect=noise=${umbralDb}dB:d=${duracionMinima}`,
+      '-f',
+      'null',
+      '-',
+    ],
+    { timeoutMs: TIMEOUT_ANALISIS_MS, timeoutResuelve: true },
+  )
 
   const silencios: Intervalo[] = []
   let inicio: number | null = null
@@ -87,17 +100,30 @@ export function tramosConSonido(
 export async function detectarEscenas(
   ruta: string,
   umbral = 0.3,
+  duracionVideo = 0,
 ): Promise<number[]> {
-  const { stdout } = await ffmpeg([
-    '-i',
-    ruta,
-    '-vf',
-    `select='gt(scene,${umbral})',metadata=print:file=-`,
-    '-an',
-    '-f',
-    'null',
-    '-',
-  ])
+  // Presupuesto proporcional al vídeo: si se agota, se conservan los cortes
+  // detectados hasta ese momento en lugar de bloquear el pipeline.
+  const presupuesto = Math.max(
+    45_000,
+    Math.min(TIMEOUT_ANALISIS_MS, 20_000 + duracionVideo * 250),
+  )
+
+  const { stdout } = await ffmpeg(
+    [
+      '-i',
+      ruta,
+      // Escalamos antes de comparar: la escena se calcula sobre el fotograma
+      // reducido y no sobre el original, con el mismo resultado práctico.
+      '-vf',
+      `scale=320:-2,select='gt(scene,${umbral})',metadata=print:file=-`,
+      '-an',
+      '-f',
+      'null',
+      '-',
+    ],
+    { timeoutMs: presupuesto, timeoutResuelve: true },
+  )
 
   const escenas: number[] = []
   const regex = /pts_time:([\d.]+)/g
@@ -118,16 +144,19 @@ export async function detectarEnergia(
   muestrasPorSegundo = 10,
 ): Promise<{ t: number; rms: number }[]> {
   const nsamples = Math.round(44100 / muestrasPorSegundo)
-  const { stdout } = await ffmpeg([
-    '-i',
-    ruta,
-    '-vn',
-    '-af',
-    `aresample=8000,aformat=channel_layouts=mono,asetnsamples=n=${nsamples},astats=metadata=1:reset=1,ametadata=print:key=lavfi.astats.Overall.RMS_level:file=-`,
-    '-f',
-    'null',
-    '-',
-  ])
+  const { stdout } = await ffmpeg(
+    [
+      '-i',
+      ruta,
+      '-vn',
+      '-af',
+      `aresample=8000,aformat=channel_layouts=mono,asetnsamples=n=${nsamples},astats=metadata=1:reset=1,ametadata=print:key=lavfi.astats.Overall.RMS_level:file=-`,
+      '-f',
+      'null',
+      '-',
+    ],
+    { timeoutMs: TIMEOUT_ANALISIS_MS, timeoutResuelve: true },
+  )
 
   const texto = stdout.toString('utf8')
   const energia: { t: number; rms: number }[] = []
@@ -275,8 +304,10 @@ export function seleccionarMomentos(
 export async function analizarVideo(
   ruta: string,
   opciones: OpcionesSeleccion,
+  onEtapa?: (etapa: string, fraccion: number, duracion: number) => void,
 ): Promise<ResultadoAnalisis> {
   const metadatos = await sondearVideo(ruta)
+  const duracion = metadatos.duracion
 
   let silencios: Intervalo[] = []
   let escenas: number[] = []
@@ -284,23 +315,28 @@ export async function analizarVideo(
 
   if (metadatos.tieneAudio) {
     try {
+      onEtapa?.('Analizando los silencios', 0.15, duracion)
       silencios = await detectarSilencios(ruta)
     } catch {
       silencios = []
     }
   }
   try {
-    escenas = await detectarEscenas(ruta)
+    onEtapa?.('Analizando los cambios de plano', 0.5, duracion)
+    escenas = await detectarEscenas(ruta, 0.3, duracion)
   } catch {
     escenas = []
   }
   if (metadatos.tieneAudio) {
     try {
+      onEtapa?.('Analizando la energía del audio', 0.8, duracion)
       energia = await detectarEnergia(ruta)
     } catch {
       energia = []
     }
   }
+
+  onEtapa?.('Seleccionando los momentos destacados', 1, duracion)
 
   const momentos = seleccionarMomentos(
     metadatos.duracion,

@@ -132,12 +132,42 @@ export function listarJobs(): Job[] {
   return [...registro().jobs.values()].sort((a, b) => b.creado - a.creado)
 }
 
-/** Trabajo en curso (o el último) de un proyecto. */
+/**
+ * Trabajo en curso (o el último) de un proyecto.
+ */
 export function jobDeProyecto(proyectoId: string): Job | null {
   const candidatos = [...registro().jobs.values()]
     .filter((j) => j.objetivoId === proyectoId)
     .sort((a, b) => b.creado - a.creado)
   return candidatos[0] ?? null
+}
+
+/** Duración media de los trabajos ya terminados (para estimar esperas). */
+function duracionMediaJob(): number | null {
+  const terminados = [...registro().jobs.values()].filter(
+    (j) => j.estado === 'listo' && j.actualizado > j.creado,
+  )
+  if (!terminados.length) return null
+  const total = terminados.reduce(
+    (acc, j) => acc + (j.actualizado - j.creado) / 1000,
+    0,
+  )
+  return total / terminados.length
+}
+
+/**
+ * Al encolar, informamos de cuánto se espera: el trabajo no empieza hasta
+ * que termine el anterior (un único worker, para no saturar la CPU).
+ */
+function marcarEspera(jobId: string): void {
+  const registroGlobal = registro()
+  const pendientes = registroGlobal.cola.filter((id) => id !== jobId).length
+  if (pendientes === 0) return
+  const media = duracionMediaJob()
+  actualizarJob(jobId, {
+    etapa: `En cola (${pendientes} ${pendientes === 1 ? 'trabajo' : 'trabajos'} por delante)`,
+    etaSegundos: media ? Math.round(media * pendientes) : null,
+  })
 }
 
 function actualizarJob(id: string, patch: Partial<Job>): void {
@@ -156,16 +186,17 @@ export function encolarProyecto(
   opciones: OpcionesJob,
 ): Job {
   const job = crearJob('proyecto', proyectoId)
+  marcarEspera(job.id)
   void ejecutarEnSegundoPlano(job.id, sesion, opciones)
   return job
 }
-
 export function encolarClip(
   sesion: SessionPayload,
   clipId: string,
   opciones: Partial<OpcionesJob> = {},
 ): Job {
   const job = crearJob('clip', clipId)
+  marcarEspera(job.id)
   void ejecutarEnSegundoPlano(job.id, sesion, {
     ...OPCIONES_POR_DEFECTO,
     ...opciones,
@@ -184,6 +215,7 @@ export function encolarImportacion(
   opciones: OpcionesJob,
 ): Job {
   const job = crearJob('importar', proyectoId, { url })
+  marcarEspera(job.id)
   void ejecutarEnSegundoPlano(job.id, sesion, opciones)
   return job
 }
@@ -285,11 +317,33 @@ async function procesarProyecto(
     })
     actualizarJob(job.id, { etapa: 'Analizando audio y planos', progreso: 18 })
 
-    const analisis: ResultadoAnalisis = await analizarVideo(original, {
-      duracionClip: opciones.duracionClip,
-      maximoClips: opciones.maximoClips,
-      minimoSeparacion: 4,
-    })
+    // Estimación inicial: a partir de la duración, hasta que tengamos
+    // medidas reales de render por clip.
+    const { estimarTiempoProceso } = await import('./descarga')
+
+    const analisis: ResultadoAnalisis = await analizarVideo(
+      original,
+      {
+        duracionClip: opciones.duracionClip,
+        maximoClips: opciones.maximoClips,
+        minimoSeparacion: 4,
+      },
+      (etapa, fraccion, duracion) => {
+        // El análisis ocupa del 18 % al 28 % del proceso.
+        const progreso = 18 + fraccion * 10
+        actualizarJob(job.id, {
+          etapa,
+          progreso: Math.round(progreso),
+          etaSegundos: estimarTiempoProceso(duracion, opciones.maximoClips),
+        })
+        void repo
+          .actualizarProyecto(proyecto.id, {
+            progreso: Math.round(progreso),
+            etapa,
+          })
+          .catch(() => undefined)
+      },
+    )
 
     if (!analisis.metadatos.duracion) {
       throw new Error('No se pudo determinar la duración del vídeo.')

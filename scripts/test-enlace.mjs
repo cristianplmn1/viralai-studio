@@ -152,17 +152,25 @@ async function main() {
 
   paso('3. El pipeline se ejecuta sobre el vídeo descargado')
   let proyecto = null
+  const limiteMs = Number(process.env.TEST_TIMEOUT_MS ?? 300_000)
   const inicio = Date.now()
-  while (Date.now() - inicio < 300_000) {
+  let ultimaEtapa = ''
+  while (Date.now() - inicio < limiteMs) {
     const datos = await fn('fnObtenerProyecto', { proyectoId: importacion.proyectoId })
     proyecto = datos.proyecto
-    process.stdout.write(
-      `\r     ${proyecto.estado} ${proyecto.progreso}% · ${proyecto.etapa ?? ''}`.padEnd(80),
-    )
+    const proceso = datos.proceso
+    if (proceso) {
+      const linea = `${proceso.progreso}% · ${proceso.etapa}${
+        proceso.etaSegundos != null ? ` · ~${proceso.etaSegundos}s` : ''
+      }`
+      if (linea !== ultimaEtapa) {
+        ultimaEtapa = linea
+        console.log(`     ${linea}`)
+      }
+    }
     if (proyecto.estado === 'listo' || proyecto.mensaje_error) break
     await new Promise((r) => setTimeout(r, 2000))
   }
-  console.log('')
 
   if (proyecto.estado === 'listo') {
     ok(`proyecto listo en ${Math.round((Date.now() - inicio) / 1000)}s`)

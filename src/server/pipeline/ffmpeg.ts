@@ -10,6 +10,11 @@ export interface OpcionesFfmpeg {
   /** Duración total conocida, para normalizar el progreso */
   duracionTotal?: number
   timeoutMs?: number
+  /**
+   * Al agotarse el tiempo, resolver con la salida parcial en lugar de
+   * rechazar. Útil para analyseswhose: lo que ya se ha detectado sirve.
+   */
+  timeoutResuelve?: boolean
   cwd?: string
 }
 
@@ -111,6 +116,8 @@ function resolverSeguro(ruta: string): string {
 export interface ResultadoProceso {
   stdout: Buffer
   stderr: string
+  /** El proceso se detuvo por tiempo agotado (sólo con timeoutResuelve) */
+  agotado?: boolean
 }
 
 export function ejecutar(
@@ -134,12 +141,21 @@ export function ejecutar(
       if (!terminado) {
         terminado = true
         hijo.kill('SIGKILL')
-        reject(
-          new ErrorFfmpeg(
-            `El proceso ${binario} superó el tiempo límite`,
-            stderr.slice(-4000),
-          ),
-        )
+        if (opciones.timeoutResuelve) {
+          // Resolvemos con lo que ya se ha leido: el análisis no se bloquea.
+          resolve({
+            stdout: Buffer.concat(stdoutChunks),
+            stderr,
+            agotado: true,
+          })
+        } else {
+          reject(
+            new ErrorFfmpeg(
+              `El proceso ${binario} superó el tiempo límite`,
+              stderr.slice(-4000),
+            ),
+          )
+        }
       }
     }, timeout)
 

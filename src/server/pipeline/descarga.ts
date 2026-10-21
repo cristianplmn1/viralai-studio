@@ -181,8 +181,10 @@ function descargarConYtDlp(
       '--merge-output-format',
       'mp4',
       '--no-mtime',
+      // Preferimos H.264 (avc1): decodificar AV1 por software es ~7x más
+      // lento y el resultado se re-codifica a H.264 de todas formas.
       '-f',
-      'bv*[height<=1080]+ba/b[height<=1080]/b',
+      'bv*[height<=1080][vcodec^=avc1]+ba/b[height<=1080][vcodec^=avc1]/b[height<=1080]/b',
       '-o',
       join(dir, 'video.%(ext)s'),
       url,
@@ -465,7 +467,9 @@ export function estimarTiempoProceso(
   duracionVideo: number,
   numeroClips: number,
 ): number {
-  const analisis = 4 + duracionVideo * 0.32
+  // El análisis escala con la duración (decodificar el vídeo entero) y cada
+  // clip renderizado tiene un coste fijo.
+  const analisis = 3 + duracionVideo * 0.12
   const renders = numeroClips * 3.2
   return Math.max(8, Math.round(analisis + renders))
 }

@@ -34,7 +34,7 @@ type ModoOrigen = 'fichero' | 'enlace'
  * renderizado tiene un coste fijo.
  */
 function estimarProceso(duracionVideo: number, numeroClips: number): number {
-  const analisis = 4 + duracionVideo * 0.32
+  const analisis = 3 + duracionVideo * 0.12
   const renders = numeroClips * 3.2
   return Math.max(8, Math.round(analisis + renders))
 }
