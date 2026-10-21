@@ -12,3 +12,4 @@ storage
 .idea
 fixtures/*.mp4
 .tanstack
+.tools

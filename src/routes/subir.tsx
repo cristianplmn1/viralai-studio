@@ -5,17 +5,23 @@ import { Dropzone, type ArchivoSeleccionado } from '~/components/Dropzone'
 import { Toggle } from '~/components/Toggle'
 import { AvisoLegal, Panel, Spinner } from '~/components/UI'
 import { fnSesionActual } from '~/server/api/auth'
+import { fnImportarEnlace } from '~/server/api/proyectos'
 
 export const Route = createFileRoute('/subir')({
   loader: async () => {
     const sesion = await fnSesionActual()
     if (!sesion.autenticado) throw redirect({ to: '/login' })
-    return { nombre: sesion.usuario.nombre }
+    const { ytDlpDisponible } = await import('~/server/pipeline/descarga')
+    return {
+      nombre: sesion.usuario.nombre,
+      ytDlp: Boolean(ytDlpDisponible()),
+    }
   },
   component: PaginaSubir,
 })
 
 type PlataformaSeleccionada = 'youtube' | 'shorts' | 'tiktok'
+type ModoOrigen = 'fichero' | 'enlace'
 
 const PLATAFORMAS: {
   id: PlataformaSeleccionada
@@ -49,7 +55,10 @@ const PLATAFORMAS: {
 
 function PaginaSubir() {
   const navegar = useNavigate()
+  const { ytDlp } = Route.useLoaderData()
+  const [modo, setModo] = useState<ModoOrigen>('fichero')
   const [archivo, setArchivo] = useState<ArchivoSeleccionado | null>(null)
+  const [url, setUrl] = useState('')
   const [titulo, setTitulo] = useState('')
   const [seleccionadas, setSeleccionadas] = useState<PlataformaSeleccionada[]>([
     'shorts',
@@ -78,6 +87,47 @@ function PaginaSubir() {
       ),
     ),
   )
+
+  async function importarEnlace() {
+    if (!url.trim()) {
+      setError('Pega el enlace del vídeo que quieres importar.')
+      return
+    }
+    if (!seleccionadas.length) {
+      setError('Elige al menos un destino de publicación.')
+      return
+    }
+
+    setError(null)
+    setSubiendo(true)
+    setProgreso(0)
+
+    try {
+      const resultado = await fnImportarEnlace({
+        data: {
+          url: url.trim(),
+          formatos,
+          maxClips,
+          duracionClip: 34,
+          subtitulos,
+          eliminarSilencios: silencios,
+          musica,
+        },
+      })
+
+      await navegar({
+        to: '/proyectos/$proyectoId',
+        params: { proyectoId: resultado.proyectoId },
+      })
+    } catch (fallo) {
+      setError(
+        fallo instanceof Error
+          ? fallo.message
+          : 'No se pudo importar el enlace.',
+      )
+      setSubiendo(false)
+    }
+  }
 
   async function generar() {
     if (!archivo) {
@@ -138,26 +188,130 @@ function PaginaSubir() {
         <div className="mt-6 grid gap-5 lg:grid-cols-[1.4fr_1fr]">
           {/* Columna izquierda */}
           <div className="space-y-5">
-            <Panel titulo="1 · Tu vídeo" descripcion="El vídeo largo original del que extraeremos los clips.">
-              <Dropzone archivo={archivo} onArchivo={setArchivo} />
-              <div className="mt-4">
-                <label className="label" htmlFor="titulo">
-                  Título del proyecto
-                </label>
-                <input
-                  id="titulo"
-                  className="input"
-                  type="text"
-                  placeholder={
-                    archivo
-                      ? archivo.archivo.name.replace(/\.[^.]+$/, '')
-                      : 'Ej. Cómo crecer en YouTube con 0 seguidores'
-                  }
-                  value={titulo}
-                  onChange={(e) => setTitulo(e.target.value)}
-                  maxLength={140}
-                />
+            <Panel
+              titulo="1 · De dónde sale el vídeo"
+              descripcion="Sube un fichero o pega el enlace de un vídeo ya publicado."
+            >
+              <div className="mb-4 grid grid-cols-2 gap-1 rounded-xl border border-ink-700 bg-ink-900/70 p-1">
+                {(
+                  [
+                    {
+                      id: 'fichero' as const,
+                      label: 'Subir fichero',
+                      icono: 'M12 19V5M5 12l7-7 7 7',
+                    },
+                    {
+                      id: 'enlace' as const,
+                      label: 'Pegar enlace',
+                      icono:
+                        'M10 13a5 5 0 0 0 7.5.5l3-3a5 5 0 0 0-7-7l-1.5 1.5M14 11a5 5 0 0 0-7.5-.5l-3 3a5 5 0 0 0 7 7l1.5-1.5',
+                    },
+                  ]
+                ).map((opcion) => (
+                  <button
+                    key={opcion.id}
+                    type="button"
+                    onClick={() => {
+                      setModo(opcion.id)
+                      setError(null)
+                    }}
+                    className={`flex items-center justify-center gap-2 rounded-lg px-3 py-2 text-[13px] font-semibold transition-colors ${
+                      modo === opcion.id
+                        ? 'bg-gradient-to-r from-brand-600 to-magenta-600 text-white shadow-lg'
+                        : 'text-mist-400 hover:bg-ink-800 hover:text-mist-100'
+                    }`}
+                  >
+                    <svg
+                      viewBox="0 0 24 24"
+                      className="h-4 w-4"
+                      fill="none"
+                      stroke="currentColor"
+                      strokeWidth={2}
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                    >
+                      <path d={opcion.icono} />
+                    </svg>
+                    {opcion.label}
+                  </button>
+                ))}
               </div>
+
+              {modo === 'fichero' ? (
+                <>
+                  <Dropzone archivo={archivo} onArchivo={setArchivo} />
+                  <div className="mt-4">
+                    <label className="label" htmlFor="titulo">
+                      Título del proyecto
+                    </label>
+                    <input
+                      id="titulo"
+                      className="input"
+                      type="text"
+                      placeholder={
+                        archivo
+                          ? archivo.archivo.name.replace(/\.[^.]+$/, '')
+                          : 'Ej. Cómo crecer en YouTube con 0 seguidores'
+                      }
+                      value={titulo}
+                      onChange={(e) => setTitulo(e.target.value)}
+                      maxLength={140}
+                    />
+                  </div>
+                </>
+              ) : (
+                <div>
+                  <label className="label" htmlFor="url">
+                    Enlace del vídeo
+                  </label>
+                  <input
+                    id="url"
+                    className="input"
+                    type="url"
+                    inputMode="url"
+                    placeholder="https://www.youtube.com/watch?v=…"
+                    value={url}
+                    onChange={(e) => setUrl(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter' && !subiendo) void importarEnlace()
+                    }}
+                  />
+                  <p className="mt-2 text-[11.5px] leading-relaxed text-mist-500">
+                    Pega el enlace de YouTube, TikTok, X, Instagram o un MP4
+                    directo. La IA descarga el vídeo, detecta los momentos
+                    destacados y genera los clips, las portadas y los textos
+                    virales. El título original del vídeo se usa como título
+                    del proyecto.
+                  </p>
+                  <div className="mt-3 flex flex-wrap gap-1.5">
+                    {[
+                      'YouTube',
+                      'TikTok',
+                      'Instagram',
+                      'X / Twitter',
+                      'MP4 directo',
+                    ].map((origen) => (
+                      <span
+                        key={origen}
+                        className="chip border-ink-600/70 bg-ink-800/60 text-[10.5px]"
+                      >
+                        {origen}
+                      </span>
+                    ))}
+                  </div>
+
+                  {!ytDlp && (
+                    <p className="mt-3 rounded-lg border border-amber-400/20 bg-amber-400/[0.07] px-3 py-2.5 text-[11.5px] leading-relaxed text-amber-200/90">
+                      Falta <code className="font-mono">yt-dlp</code>, así que
+                      ahora sólo se admiten enlaces a ficheros MP4.{' '}
+                      <span className="font-semibold">
+                        Ejecútalo con <code className="font-mono">npm run tool:yt-dlp</code>
+                      </span>{' '}
+                      para importar también de YouTube, TikTok, X o Instagram.
+                    </p>
+                  )}
+                </div>
+              )}
             </Panel>
 
             <Panel
@@ -335,14 +489,20 @@ function PaginaSubir() {
 
               <button
                 type="button"
-                onClick={() => void generar()}
-                disabled={subiendo || !archivo}
+                onClick={() =>
+                  void (modo === 'enlace' ? importarEnlace() : generar())
+                }
+                disabled={
+                  subiendo || (modo === 'fichero' ? !archivo : !url.trim())
+                }
                 className="btn btn-primary mt-5 w-full !py-3"
               >
                 {subiendo ? (
                   <>
                     <Spinner />
-                    Generando clips con IA…
+                    {modo === 'enlace'
+                      ? 'Importando enlace…'
+                      : 'Generando clips con IA…'}
                   </>
                 ) : (
                   <>
@@ -357,7 +517,9 @@ function PaginaSubir() {
                     >
                       <path d="m12 3 2.2 6.3L21 11l-6.8 1.7L12 19l-2.2-6.3L3 11l6.8-1.7L12 3Z" />
                     </svg>
-                    Generar clips con IA
+                    {modo === 'enlace'
+                      ? 'Importar y generar con IA'
+                      : 'Generar clips con IA'}
                   </>
                 )}
               </button>

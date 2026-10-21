@@ -10,7 +10,10 @@
     "start": "node .output/server/index.mjs",
     "typecheck": "tsc --noEmit",
     "fixture": "node scripts/fixture.mjs",
-    "test:e2e": "node scripts/e2e.mjs"
+    "tool:yt-dlp": "node scripts/instalar-ytdlp.mjs",
+    "test:e2e": "node scripts/e2e.mjs",
+    "test:enlace": "node scripts/test-enlace.mjs",
+    "servidor:fixtures": "node scripts/servidor-fixtures.mjs"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.118.0",

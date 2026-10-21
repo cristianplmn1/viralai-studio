@@ -3,9 +3,10 @@
 Convierte un vídeo largo en clips verticales, portadas y textos virales listos
 para publicar en **YouTube**, **YouTube Shorts** y **TikTok**.
 
-Sube el vídeo → la IA analiza el audio y los planos, detecta los momentos
-destacados, recorta los silencios, renderiza el clip en 9:16, genera tres
-miniaturas comparables y redacta el copy viral → publica o programa.
+Sube el vídeo **o pega el enlace** de uno ya publicado → la IA analiza el audio
+y los planos, detecta los momentos destacados, recorta los silencios, renderiza
+el clip en 9:16, genera tres miniaturas comparables y redacta el copy viral →
+publica o programa.
 
 ---
 
@@ -18,6 +19,7 @@ miniaturas comparables y redacta el copy viral → publica o programa.
 | Backend | [Supabase](https://supabase.com) (Postgres, Auth, Storage, RLS) |
 | Estilo | Tailwind CSS v4 (CSS-first) |
 | Vídeo | ffmpeg / ffprobe (`ffmpeg-static`, `ffprobe-static`) |
+| Importación | [yt-dlp](https://github.com/yt-dlp/yt-dlp) (YouTube, TikTok, X, Instagram…) |
 
 La app **funciona sin Supabase**: si no hay credenciales, arranca en *modo
 local* con usuarios, proyectos y medios en disco (`./storage`). Es la forma
@@ -29,11 +31,23 @@ más rápida de probarla; para producción hay que configurar Supabase.
 
 ```bash
 npm install
+npm run tool:yt-dlp      # descarga yt-dlp a .tools/ (importación por enlace)
 cp .env.example .env      # opcional: sin esto funciona en modo local
 npm run dev               # http://localhost:3000
 ```
 
 > En Windows, si PowerShell bloquea `npm.ps1`, usa `npm.cmd install`.
+
+### yt-dlp
+
+`npm run tool:yt-dlp` descarga el binario oficial en `.tools/`. Es lo que
+permite importar desde YouTube, TikTok, X, Instagram o cualquier extractor que
+soporte yt-dlp. Sin él, la importación por enlace **sólo acepta ficheros MP4
+remotos** (la interfaz te avisa).
+
+En producción puedes definir `YT_DLP_PATH` con la ruta al binario, o
+instalarlo en el sistema y dejarlo en el `PATH`.
+
 
 ### Variables de entorno
 
@@ -97,6 +111,13 @@ subir vídeo
              · música de fondo (base original + sidechaincompress)
         └─ 3 portadas (3 fotogramas + fondo extraíble + título visual)
         └─ contenido viral (gancho, título, descripción, hashtags, score)
+
+pegar un enlace
+   └─ POST fnImportarEnlace (URL validada contra SSRF)
+        └─ descarga con yt-dlp (o HTTP directo si es un MP4)
+             · se guarda en el almacén de medios
+             · el título original del vídeo pasa a ser el del proyecto
+        └─ el pipeline continúa igual que con un fichero subido
 ```
 
 ### Detalles técnicos que importan
@@ -115,6 +136,19 @@ subir vídeo
   **HTTP Range**, así que el reproductor puede hacer *seek* sin descargar el
   fichero entero.
 
+### Seguridad de la importación por enlace
+
+El servidor descarga URLs que escribe el usuario, así que está protegido contra
+**SSRF**:
+
+- Sólo se admiten `http` y `https`.
+- Se rechaza el host si es una IP privada, de loopback, link-local (incluida la
+  `169.254.169.254` de metadatos de nube), CGNAT, multicast o reservada, y
+  también si el **dominio resuelve** a una de esas direcciones.
+- `localhost` y los nombres `*.localhost` se rechazan por nombre.
+- La URL se normaliza y se valida **antes** de crear el proyecto, de modo que
+  un enlace inválido falla al instante y no deja basura en la base de datos.
+
 ---
 
 ## Comandos
@@ -127,10 +161,12 @@ npm start          # sirve el build de producción
 
 npm run typecheck  # tsc --noEmit
 npm run test:e2e   # prueba de extremo a extremo contra el servidor
+npm run test:enlace # prueba de la importación por enlace (incluye SSRF)
 npm run fixture    # genera fixtures/demo.mp4 (vídeo de prueba)
+npm run tool:yt-dlp # descarga yt-dlp a .tools/
 ```
 
-### Prueba de extremo a extremo
+### Pruebas de extremo a extremo
 
 Con el servidor levantado en otra terminal:
 
@@ -142,6 +178,15 @@ Verifica registro, sesión, subida, generación en segundo plano, clips 9:16,
 soporte Range, tres portadas, contenido viral con puntuación 0-100, efecto
 real de los toggles sobre el render, regeneración de portadas, publicación y
 estado de las conexiones OAuth.
+
+```bash
+npm run test:enlace
+```
+
+Verifica la importación por enlace: bloquea seis vectores de ataque SSRF,
+importa un MP4 remoto real, ejecuta el pipeline y comprueba que la IA genera
+clips, portadas y copy. Con `TEST_VIDEO_URL` puedes indicar el vídeo a probar
+(por defecto usa uno público de Big Buck Bunny; para YouTube, pasa un enlace).
 
 ---
 
@@ -161,7 +206,7 @@ src/
 ├─ server/
 │  ├─ api/                 # server functions (createServerFn)
 │  ├─ db/                  # repositorio: Supabase (RLS) o local
-│  ├─ pipeline/            # análisis, render, portadas, música, cola
+│  ├─ pipeline/            # análisis, render, portadas, música, descarga, cola
 │  ├─ publishing/          # YouTube + TikTok + planificador
 │  ├─ auth.ts  crypto.ts  media.ts  env.ts
 └─ styles/app.css         # sistema de diseño (Tailwind v4)
@@ -192,11 +237,15 @@ obliga a un render nuevo.
 
 ## Límites conocidos
 
-- TikTok no ofrece programación nativa: las publicaciones programadas de TikTok
-  las ejecuta nuestro planificador (cada minuto).
-- El "eliminado de fondo" usa *chroma key* sobre el color dominante del borde:
-  funciona con fondos planos, no con fondos complexos.
-- Sin `OPENAI_API_KEY` los subtítulos son de palabras clave (no una
+- **La publicación real** en YouTube y TikTok necesita credenciales OAuth
+  configuradas; sin ellas entra en **modo demo** (registra la publicación pero
+  no llega a la plataforma).
+- **TikTok no ofrece programación nativa**: las publicaciones programadas de
+  TikTok las ejecuta nuestro planificador (cada minuto). YouTube sí usa
+  `publishAt`.
+- **El "eliminado de fondo"** usa *chroma key* sobre el color dominante del
+  borde: funciona con fondos planos, no con fondos complexos.
+- **Sin `OPENAI_API_KEY`** los subtítulos son de palabras clave (no una
   transcripción) y el copy viral se genera con plantillas heurísticas.
-- Sin credenciales OAuth, publicar entra en **modo demo**: se registra la
-  publicación pero no llega a la plataforma.
+- **yt-dlp se descarga aparte** (`npm run tool:yt-dlp`): no viene incluido en
+  el repositorio por su tamaño.

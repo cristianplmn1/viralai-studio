@@ -139,6 +139,12 @@ async function fn(nombre, data) {
     throw new Error(`ServerFn ${nombre} -> ${res.status}: ${texto.slice(0, 400)}`)
   }
 
+  // seroval no sabe deserializar el nodo Error: lo detectamos en crudo.
+  const mensajeError = /"message":\{"t":1,"s":"((?:[^"\\]|\\.)*)"\}/.exec(texto)
+  if (mensajeError) {
+    throw new Error(`${nombre}: ${JSON.parse(`"${mensajeError[1]}"`)}`)
+  }
+
   let cuerpo
   try {
     cuerpo = fromCrossJSON(JSON.parse(texto), { plugins: [] })
@@ -148,11 +154,6 @@ async function fn(nombre, data) {
     } catch {
       cuerpo = texto
     }
-  }
-  if (cuerpo && typeof cuerpo === 'object' && 'error' in cuerpo) {
-    throw new Error(
-      `ServerFn ${nombre} error: ${JSON.stringify(cuerpo.error).slice(0, 400)}`,
-    )
   }
   return cuerpo?.result ?? cuerpo
 }

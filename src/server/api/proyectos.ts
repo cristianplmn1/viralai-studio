@@ -42,6 +42,86 @@ export const fnEliminarProyecto = createServerFn({ method: 'POST' })
   })
 
 /* ------------------------------------------------------------------ */
+/* Importación desde un enlace externo                                 */
+/* ------------------------------------------------------------------ */
+
+/**
+ * Esquema de la importación por enlace.
+ *
+ * Se valida DENTRO del handler (y no con `.validator()`) porque el plugin
+ * que separa las server functions entre cliente y servidor pierde el
+ * contenido de los esquemas con arrays: el validador recibía `{}` en lugar
+ * del payload y todos los campos salían como `undefined`.
+ */
+const esquemaImportacion = z.object({
+  url: z.string().min(4, 'Introduce un enlace válido.'),
+  formatos: z.array(z.enum(['9:16', '16:9'])).min(1),
+  maxClips: z.number().int().min(1).max(5),
+  duracionClip: z.number().int().min(10).max(120),
+  subtitulos: z.boolean(),
+  eliminarSilencios: z.boolean(),
+  musica: z.boolean(),
+})
+
+/**
+ * Crea un proyecto a partir de un vídeo remoto (YouTube, TikTok, un MP4
+ * directo…) y encola la descarga + el pipeline completo.
+ */
+export const fnImportarEnlace = createServerFn({ method: 'POST' })
+  .validator(validar(esquemaImportacion))
+  .handler(async ({ data }: { data: unknown }) => {
+    const parsed = esquemaImportacion.safeParse(data)
+    if (!parsed.success) {
+      const primero = parsed.error.issues[0]
+      throw new Error(
+        primero?.message ?? 'Los datos de la importación no son válidos.',
+      )
+    }
+    const {
+      url: enlace,
+      formatos,
+      maxClips,
+      duracionClip,
+      subtitulos,
+      eliminarSilencios,
+      musica,
+    } = parsed.data
+
+    const { sesion, repo } = await contexto()
+    const { validarUrlVideo } = await import('../pipeline/descarga')
+    const { encolarImportacion } = await import('../pipeline/cola')
+    const { ytDlpDisponible } = await import('../pipeline/descarga')
+
+    // Validación inmediata: da error rápido si el enlace es inválido o apunta
+    // a una dirección interna (protección SSRF).
+    const validada = await validarUrlVideo(enlace)
+
+    const proyecto = await repo.crearProyecto({
+      usuario_id: sesion.uid,
+      titulo: `Importado · ${validada.host}`,
+      url_video_original: '',
+      duracion_seg: 0,
+      estado: 'procesando',
+    })
+
+    const job = encolarImportacion(sesion, proyecto.id, validada.href, {
+      formatos,
+      maximoClips: maxClips,
+      duracionClip,
+      subtitulos,
+      eliminarSilencios,
+      musica,
+    })
+
+    return {
+      ok: true as const,
+      proyectoId: proyecto.id,
+      jobId: job.id,
+      ytDlp: Boolean(ytDlpDisponible()),
+    }
+  })
+
+/* ------------------------------------------------------------------ */
 /* Carga de vídeo (endpoint REST, fuera de las server functions)      */
 /* ------------------------------------------------------------------ */
 

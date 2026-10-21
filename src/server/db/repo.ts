@@ -44,7 +44,13 @@ export interface Repo {
     patch: Partial<
       Pick<
         Proyecto,
-        'titulo' | 'estado' | 'duracion_seg' | 'progreso' | 'etapa' | 'mensaje_error'
+        | 'titulo'
+        | 'estado'
+        | 'duracion_seg'
+        | 'progreso'
+        | 'etapa'
+        | 'mensaje_error'
+        | 'url_video_original'
       >
     >,
   ): Promise<Proyecto>

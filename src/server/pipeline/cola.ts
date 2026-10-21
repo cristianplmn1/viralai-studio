@@ -11,7 +11,7 @@ import { generarPortadas } from './portadas'
 import { generarViral } from './viral'
 import { transcribir } from './transcripcion'
 
-export type TipoJob = 'proyecto' | 'clip'
+export type TipoJob = 'proyecto' | 'clip' | 'importar'
 export type EstadoJob = 'pendiente' | 'ejecutando' | 'listo' | 'error'
 
 export interface Job {
@@ -24,6 +24,8 @@ export interface Job {
   error: string | null
   creado: number
   actualizado: number
+  /** Datos extra del trabajo (por ejemplo, la URL de origen) */
+  datos?: Record<string, string>
 }
 
 export interface OpcionesJob {
@@ -68,7 +70,11 @@ function registro(): Registro {
   return nuevo
 }
 
-function crearJob(tipo: TipoJob, objetivoId: string): Job {
+function crearJob(
+  tipo: TipoJob,
+  objetivoId: string,
+  datos?: Record<string, string>,
+): Job {
   const registroGlobal = registro()
   const job: Job = {
     id: `job_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`,
@@ -80,6 +86,7 @@ function crearJob(tipo: TipoJob, objetivoId: string): Job {
     error: null,
     creado: Date.now(),
     actualizado: Date.now(),
+    ...(datos ? { datos } : {}),
   }
   registroGlobal.jobs.set(job.id, job)
   registroGlobal.cola.push(job.id)
@@ -138,6 +145,21 @@ export function encolarClip(
 }
 
 /**
+ * Importa un vídeo desde una URL externa (YouTube, TikTok, un MP4 directo…)
+ * y lanza el pipeline completo sobre él.
+ */
+export function encolarImportacion(
+  sesion: SessionPayload,
+  proyectoId: string,
+  url: string,
+  opciones: OpcionesJob,
+): Job {
+  const job = crearJob('importar', proyectoId, { url })
+  void ejecutarEnSegundoPlano(job.id, sesion, opciones)
+  return job
+}
+
+/**
  * Un único worker procesa la cola: evita saturar la CPU con renders
  * simultáneos y mantiene el orden de los trabajos.
  */
@@ -159,6 +181,8 @@ async function ejecutarEnSegundoPlano(
     if (!job) return
     if (job.tipo === 'proyecto') {
       await procesarProyecto(job, sesion, opciones)
+    } else if (job.tipo === 'importar') {
+      await procesarImportacion(job, sesion, opciones)
     } else {
       await procesarClip(job, sesion, opciones)
     }
@@ -373,12 +397,94 @@ async function procesarProyecto(
   }
 }
 
-async function procesarClip(
+/* ------------------------------------------------------------------ */
+/* Importación desde URL                                               */
+/* ------------------------------------------------------------------ */
+
+/**
+ * Descarga el vídeo de una URL externa, lo guarda en el almacén de medios
+ * y lanza el mismo pipeline que se usa con un fichero subido.
+ */
+async function procesarImportacion(
   job: Job,
   sesion: SessionPayload,
   opciones: OpcionesJob,
 ): Promise<void> {
   const repo = await repoDeSesion(sesion)
+  const proyecto = await repo.obtenerProyecto(job.objetivoId)
+  if (!proyecto) throw new Error('Proyecto no encontrado')
+
+  const url = job.datos?.url
+  if (!url) throw new Error('El trabajo no tiene ninguna URL de origen.')
+
+  const trabajo = directorioTrabajo()
+  await mkdir(trabajo, { recursive: true })
+  const destino = join(trabajo, `import_${proyecto.id}.mp4`)
+
+  try {
+    await repo.actualizarProyecto(proyecto.id, {
+      estado: 'procesando',
+      progreso: 2,
+      etapa: 'Descargando vídeo desde el enlace',
+      mensaje_error: null,
+    })
+    actualizarJob(job.id, { etapa: 'Descargando vídeo desde el enlace', progreso: 2 })
+
+    const { descargarVideo, existeFichero } = await import('./descarga')
+    const metadatos = await descargarVideo(url, destino, (porcentaje) => {
+      actualizarJob(job.id, {
+        progreso: Math.max(3, Math.round(porcentaje * 0.25)),
+        etapa: `Descargando vídeo desde el enlace · ${Math.round(porcentaje)}%`,
+      })
+    })
+
+    if (!(await existeFichero(destino))) {
+      throw new Error('El enlace no ha producido ningún vídeo descargable.')
+    }
+
+    // Si el vídeo original trae título, lo usamos como título del proyecto.
+    const titulo = metadatos.titulo?.trim()
+    if (titulo) {
+      await repo.actualizarProyecto(proyecto.id, { titulo: titulo.slice(0, 140) })
+    }
+
+    const { guardarMedio } = await import('../media')
+    const urlGuardada = await guardarMedio(
+      `uploads/${sesion.uid}/${proyecto.id}-import.mp4`,
+      await readFile(destino),
+      'video/mp4',
+    )
+    await repo.actualizarProyecto(proyecto.id, {
+      url_video_original: urlGuardada,
+      duracion_seg: metadatos.duracion,
+      progreso: 26,
+      etapa: 'Vídeo descargado, analizando',
+    })
+
+    // A partir de aquí el trabajo es idéntico al de un vídeo subido.
+    const trabajoProyecto: Job = { ...job, tipo: 'proyecto' }
+    await procesarProyecto(trabajoProyecto, sesion, opciones)
+  } catch (error) {
+    await repo
+      .actualizarProyecto(proyecto.id, {
+        estado: 'procesando',
+        progreso: 0,
+        etapa: 'Error en la importación',
+        mensaje_error:
+          error instanceof Error ? error.message : String(error),
+      })
+      .catch(() => undefined)
+    throw error
+  } finally {
+    await rm(destino, { force: true }).catch(() => undefined)
+  }
+}
+
+async function procesarClip(
+  job: Job,
+  sesion: SessionPayload,
+  opciones: OpcionesJob,
+): Promise<void> {  const repo = await repoDeSesion(sesion)
   const clip = await repo.obtenerClip(job.objetivoId)
   if (!clip) throw new Error('Clip no encontrado')
   const proyecto = await repo.obtenerProyecto(clip.proyecto_id)
