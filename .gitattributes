@@ -1,0 +1,21 @@
+# Normalización de finales de línea entre Windows y Linux/macOS
+* text=auto eol=lf
+
+# Binarios
+*.jpg binary
+*.jpeg binary
+*.png binary
+*.webp binary
+*.mp4 binary
+*.webm binary
+*.mov binary
+*.wav binary
+*.mp3 binary
+*.m4a binary
+*.pdf binary
+
+# Configuración local
+.env
+.env.local
+storage/
+fixtures/*.mp4

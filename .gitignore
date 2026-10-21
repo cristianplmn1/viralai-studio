@@ -1,0 +1,14 @@
+node_modules
+.output
+.nitro
+.cache
+dist
+storage
+.env
+.env.local
+*.log
+.DS_Store
+.vscode
+.idea
+fixtures/*.mp4
+.tanstack
