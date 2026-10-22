@@ -4,7 +4,10 @@ import { Logo } from '~/components/Logo'
 import { AvisoLegal, Spinner } from '~/components/UI'
 import { useSesion } from '~/components/SesionProvider'
 import { fnEntrar, fnRegistrar } from '~/server/api/auth'
-import { fnIniciarOAuth } from '~/server/api/conexion'
+import {
+  fnEstadoHerramientas,
+  fnIniciarOAuth,
+} from '~/server/api/conexion'
 
 export const Route = createFileRoute('/login')({
   component: PaginaLogin,
@@ -15,6 +18,10 @@ type Modo = 'entrar' | 'registro'
 function PaginaLogin() {
   const navegar = useNavigate()
   const { autenticado, usuario, refrescar } = useSesion()
+  const [herramientas, setHerramientas] = useState({
+    youtubeConfigurado: false,
+    tiktokConfigurado: false,
+  })
 
   const [modo, setModo] = useState<Modo>('entrar')
   const [email, setEmail] = useState('')
@@ -23,6 +30,13 @@ function PaginaLogin() {
   const [error, setError] = useState<string | null>(null)
   const [enviando, setEnviando] = useState(false)
   const [conectando, setConectando] = useState<'youtube' | 'tiktok' | null>(null)
+
+  useEffect(() => {
+    void fnEstadoHerramientas().then(setHerramientas).catch(() => undefined)
+  }, [])
+
+  const youtubeConfigurado = herramientas.youtubeConfigurado
+  const tiktokConfigurado = herramientas.tiktokConfigurado
 
   useEffect(() => {
     if (autenticado) {
@@ -66,7 +80,11 @@ function PaginaLogin() {
       const { url } = await fnIniciarOAuth({ data: { plataforma } })
       window.location.href = url
     } catch (fallo) {
-      setError(fallo instanceof Error ? fallo.message : 'No se pudo iniciar la conexión.')
+      setError(
+        fallo instanceof Error
+          ? fallo.message
+          : 'No se pudo iniciar la conexión.',
+      )
       setConectando(null)
     }
   }
@@ -324,7 +342,19 @@ function PaginaLogin() {
             </p>
           )}
 
-          <div className="mt-8 lg:hidden">
+          {!youtubeConfigurado && !tiktokConfigurado && (
+            <p className="mt-4 rounded-lg border border-ink-700 bg-ink-900/60 px-3 py-2.5 text-[11.5px] leading-relaxed text-mist-500">
+              Las conexiones OAuth están <span className="text-mist-300">sin
+              configurar</span>: para activarlas añade{' '}
+              <code className="font-mono text-mist-300">YOUTUBE_CLIENT_ID</code>,{' '}
+              <code className="font-mono text-mist-300">TIKTOK_CLIENT_KEY</code> y
+              sus secretos en el fichero{' '}
+              <code className="font-mono text-mist-300">.env</code>, y reinicia
+              el servidor. Mientras tanto puedes usar la app con normalidad.
+            </p>
+          )}
+
+          <div className="mt-4 lg:hidden">
             <AvisoLegal />
           </div>
         </div>

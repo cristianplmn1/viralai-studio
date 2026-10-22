@@ -46,6 +46,7 @@ function PaginaEditor() {
   const [jobId, setJobId] = useState<string | null>(null)
   const [progresoRender, setProgresoRender] = useState(0)
   const [etapaRender, setEtapaRender] = useState<string | null>(null)
+  const [etaRender, setEtaRender] = useState<number | null>(null)
   const [mensaje, setMensaje] = useState<{ tipo: 'ok' | 'error'; texto: string } | null>(
     null,
   )
@@ -66,6 +67,7 @@ function PaginaEditor() {
         if (cancelado || !job) return
         setProgresoRender(job.progreso)
         setEtapaRender(job.etapa)
+        setEtaRender(job.etaSegundos ?? null)
         if (job.estado === 'listo') {
           clearInterval(intervalo)
           setJobId(null)
@@ -200,13 +202,18 @@ function PaginaEditor() {
 
             {guardando && (
               <div className="mt-4 rounded-lg border border-brand-500/25 bg-brand-500/[0.07] px-4 py-3">
-                <div className="mb-1.5 flex items-center justify-between text-[12px]">
+                <div className="mb-1.5 flex items-center justify-between gap-3 text-[12px]">
                   <span className="flex items-center gap-2 font-semibold text-brand-200">
                     <Spinner className="h-3.5 w-3.5" />
                     {etapaRender ?? 'Renderizando…'}
                   </span>
-                  <span className="num font-semibold text-brand-300">
+                  <span className="num shrink-0 font-semibold text-brand-300">
                     {Math.round(progresoRender)}%
+                    {etaRender != null && etaRender > 0 && (
+                      <span className="ml-2 font-normal text-amber-200/80">
+                        ~{etaRender} s
+                      </span>
+                    )}
                   </span>
                 </div>
                 <div className="h-1.5 w-full overflow-hidden rounded-full bg-ink-700">

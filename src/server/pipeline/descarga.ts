@@ -149,9 +149,44 @@ export async function descargarVideo(
   const binario = ytDlpDisponible()
 
   if (binario) {
-    return descargarConYtDlp(binario, url, destino, onProgreso)
+    // yt-dlp sigue las redirecciones por su cuenta y se saltaría nuestra
+    // validación: resolvemos la cadena aquí, comprobando cada salto.
+    const resuelta = await resolverRedirecciones(url)
+    return descargarConYtDlp(binario, resuelta, destino, onProgreso)
   }
   return descargarDirecto(url, destino, onProgreso)
+}
+
+/**
+ * Sigue las redirecciones de una URL validando **cada** salto.
+ * Si en algún punto se apunta a una dirección interna, se corta.
+ */
+export async function resolverRedirecciones(url: string): Promise<string> {
+  let actual = url
+  for (let salto = 0; salto < 5; salto++) {
+    const validada = await validarUrlVideo(actual)
+    let respuesta: Response
+    try {
+      respuesta = await fetch(validada.href, {
+        method: 'HEAD',
+        redirect: 'manual',
+        headers: { 'User-Agent': 'ViralAI-Studio/1.0' },
+      })
+    } catch {
+      return validada.href
+    }
+    const ubicacion = respuesta.headers.get('location')
+    if (
+      respuesta.status >= 300 &&
+      respuesta.status < 400 &&
+      ubicacion
+    ) {
+      actual = new URL(ubicacion, validada.href).toString()
+      continue
+    }
+    return validada.href
+  }
+  throw new Error('La URL redirige en bucle.')
 }
 
 function descargarConYtDlp(
@@ -195,6 +230,19 @@ function descargarConYtDlp(
     const rutaFfmpeg = resolverFfmpeg()
     if (rutaFfmpeg) argumentos.push('--ffmpeg-location', rutaFfmpeg)
 
+    // YouTube pide verificación ("Sign in to confirm you're not a bot") cuando
+    // detecta un uso automatizado. Con las cookies del navegador del usuario
+    // (YT_DLP_COOKIES_FROM_BROWSER=chrome) o de un fichero de cookies
+    // (YT_DLP_COOKIES_FILE) se resuelve.
+    const cookiesNavegador = process.env.YT_DLP_COOKIES_FROM_BROWSER
+    if (cookiesNavegador) {
+      argumentos.push('--cookies-from-browser', cookiesNavegador)
+    }
+    const ficheroCookies = process.env.YT_DLP_COOKIES_FILE
+    if (ficheroCookies) {
+      argumentos.push('--cookies', ficheroCookies)
+    }
+
     const hijo = spawn(binario, argumentos, { windowsHide: true })
     let stderr = ''
     let stdout = ''
@@ -229,10 +277,16 @@ function descargarConYtDlp(
     hijo.on('close', async (codigo) => {
       if (codigo !== 0) {
         const mensaje = /ERROR:\s*(.+)/i.exec(stderr)
+        console.log(
+          '[TRAZA traducir] capturada:',
+          JSON.stringify(mensaje?.[1]?.slice(0, 90) ?? null),
+        )
         reject(
           new Error(
-            mensaje?.[1]?.trim() ??
-              `No se pudo descargar el vídeo (código ${codigo}).`,
+            traducirErrorDescarga(
+              mensaje?.[1]?.trim() ??
+                `No se pudo descargar el vídeo (código ${codigo}).`,
+            ),
           ),
         )
         return
@@ -305,11 +359,36 @@ async function descargarDirecto(
 ): Promise<MetadatosDescarga> {
   onProgreso?.(5, 'Descargando vídeo')
 
-  const respuesta = await fetch(url, {
-    headers: { 'User-Agent': 'ViralAI-Studio/1.0' },
-    redirect: 'follow',
-  })
+  // Cada redirección se valida como si fuera una URL nueva: si no, una URL
+  // pública podría redirigir a la metadata de la nube (169.254.169.254).
+  let actual = url
+  let respuesta: Response | null = null
+  for (let salto = 0; salto < 4; salto++) {
+    const validada = await validarUrlVideo(actual)
+    respuesta = await fetch(validada.href, {
+      headers: { 'User-Agent': 'ViralAI-Studio/1.0' },
+      redirect: 'manual',
+    })
 
+    if (
+      respuesta.status >= 300 &&
+      respuesta.status < 400 &&
+      respuesta.headers.get('location')
+    ) {
+      const destinoRedirect = new URL(
+        respuesta.headers.get('location')!,
+        validada.href,
+      ).toString()
+      actual = destinoRedirect
+      respuesta = null
+      continue
+    }
+    break
+  }
+
+  if (!respuesta) {
+    throw new Error('La URL redirige en bucle o a un destino no permitido.')
+  }
   if (!respuesta.ok) {
     throw new Error(`El servidor devolvió ${respuesta.status} al descargar.`)
   }
@@ -343,6 +422,43 @@ async function descargarDirecto(
     thumbnail: null,
     extractor: 'directo',
   }
+}
+
+/**
+ * Traduce los errores típicos de yt-dlp a un mensaje que el usuario pueda
+ * resolver. Los errores crudos ("Sign in to confirm you're not a bot") no
+ * le dicen nada a un creador.
+ */
+export function traducirErrorDescarga(mensaje: string): string {
+  // yt-dlp usa comillas tipográficas: normalizamos para poder comparar.
+  const texto = mensaje
+    .replace(/[‘’]/g, "'")
+    .replace(/[“”]/g, '"')
+    .toLowerCase()
+
+  if (texto.includes("sign in to confirm you're not a bot")) {
+    return (
+      'YouTube ha pedido verificación por exceso de peticiones automatizadas. ' +
+      'Espera unos minutos o exporta las cookies de tu navegador: define ' +
+      'YT_DLP_COOKIES_FROM_BROWSER=chrome (o YT_DLP_COOKIES_FILE) en el .env.'
+    )
+  }
+  if (texto.includes('private video') || texto.includes('members-only')) {
+    return 'Ese vídeo es privado o sólo para miembros: no se puede importar.'
+  }
+  if (texto.includes('video unavailable') || texto.includes('has been removed')) {
+    return 'Ese vídeo no está disponible (eliminado o restringido en tu región).'
+  }
+  if (texto.includes('unsupported url') || texto.includes('no suitable extractor')) {
+    return 'yt-dlp no reconoce ese sitio. Prueba con un enlace de YouTube, TikTok, X o Instagram.'
+  }
+  if (texto.includes('geo restricted') || texto.includes('not available in your country')) {
+    return 'Ese vídeo está bloqueado por geolocalización.'
+  }
+  if (texto.includes('age')) {
+    return 'Ese vídeo está restringido por edad.'
+  }
+  return mensaje
 }
 
 /* ------------------------------------------------------------------ */
@@ -407,7 +523,9 @@ export async function inspeccionarEnlace(
       if (codigo !== 0) {
         const mensaje = /ERROR:\s*(.+)/i.exec(stderr)
         resolve({
-          titulo: mensaje?.[1]?.trim() ?? '',
+          titulo: traducirErrorDescarga(
+            mensaje?.[1]?.trim() ?? 'No se ha podido leer el enlace.',
+          ),
           duracion: 0,
           thumbnail: null,
           extractor: 'error',

@@ -38,7 +38,12 @@ export const fnInspeccionarEnlace = createServerFn({ method: 'POST' })
 export const fnEstadoHerramientas = createServerFn({ method: 'GET' }).handler(
   async () => {
     const { ytDlpDisponible } = await import('../pipeline/descarga')
-    return { ytDlp: Boolean(ytDlpDisponible()) }
+    const { isYouTubeConfigured, isTikTokConfigured } = await import('../env')
+    return {
+      ytDlp: Boolean(ytDlpDisponible()),
+      youtubeConfigurado: isYouTubeConfigured,
+      tiktokConfigurado: isTikTokConfigured,
+    }
   },
 )
 
@@ -80,6 +85,20 @@ export const fnIniciarOAuth = createServerFn({ method: 'POST' })
   .handler(async ({ data }) => {
     const { sesionVigente } = await import('../auth')
     const { randomId, signPayload } = await import('../crypto')
+    const { isYouTubeConfigured, isTikTokConfigured } = await import('../env')
+
+    // Sin credenciales OAuth la URL llevaría a una página de error de la
+    // plataforma: mejor explicarlo aquí mismo.
+    if (data.plataforma === 'youtube' && !isYouTubeConfigured) {
+      throw new Error(
+        'YouTube OAuth no está configurado. Añade YOUTUBE_CLIENT_ID y YOUTUBE_CLIENT_SECRET al fichero .env y reinicia el servidor.',
+      )
+    }
+    if (data.plataforma === 'tiktok' && !isTikTokConfigured) {
+      throw new Error(
+        'TikTok OAuth no está configurado. Añade TIKTOK_CLIENT_KEY y TIKTOK_CLIENT_SECRET al fichero .env y reinicia el servidor.',
+      )
+    }
 
     const sesion = await sesionVigente()
     if (!sesion) throw new Error('Debes iniciar sesión para conectar una cuenta.')

@@ -3,6 +3,50 @@
  * Nunca debe importarse desde componentes de cliente.
  */
 
+import { existsSync, readFileSync } from 'node:fs'
+import { resolve } from 'node:path'
+
+/**
+ * Carga el fichero `.env` en `process.env`.
+ *
+ * Vite sólo expone a `import.meta.env` las variables con prefijo `VITE_`, y
+ * Nitro las carga en producción pero no en desarrollo. Sin esto, un `.env`
+ * con las credenciales de OAuth no serviría de nada en `npm run dev`.
+ *
+ * Las variables ya presentes en el entorno tienen prioridad (CI, Docker…).
+ */
+function cargarEnv(): void {
+  const ruta = resolve(process.cwd(), '.env')
+  if (!existsSync(ruta)) return
+  let contenido: string
+  try {
+    contenido = readFileSync(ruta, 'utf8')
+  } catch {
+    return
+  }
+
+  for (const linea of contenido.split(/\r?\n/)) {
+    // quitamos el BOM que suelen poner los editores de Windows
+    const limpia = linea.replace(/^\uFEFF/, '').trim()
+    if (!limpia || limpia.startsWith('#')) continue
+    const igual = limpia.indexOf('=')
+    if (igual <= 0) continue
+    const nombre = limpia.slice(0, igual).trim()
+    let valor = limpia.slice(igual + 1).trim()
+    if (
+      (valor.startsWith('"') && valor.endsWith('"') && valor.length > 1) ||
+      (valor.startsWith("'") && valor.endsWith("'") && valor.length > 1)
+    ) {
+      valor = valor.slice(1, -1)
+    }
+    if (!(nombre in process.env)) {
+      process.env[nombre] = valor
+    }
+  }
+}
+
+cargarEnv()
+
 function str(key: string, fallback = ''): string {
   const value = process.env[key]
   return value && value.trim() ? value.trim() : fallback

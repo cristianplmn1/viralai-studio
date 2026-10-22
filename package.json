@@ -10,6 +10,7 @@
     "start": "node .output/server/index.mjs",
     "typecheck": "tsc --noEmit",
     "check:cliente": "node scripts/check-fugas-cliente.mjs",
+    "check:navegador": "node scripts/check-navegador.mjs",
     "fixture": "node scripts/fixture.mjs",
     "tool:yt-dlp": "node scripts/instalar-ytdlp.mjs",
     "test:e2e": "node scripts/e2e.mjs",

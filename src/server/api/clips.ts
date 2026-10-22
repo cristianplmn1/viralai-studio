@@ -135,6 +135,9 @@ export const fnEstadoJob = createServerFn({ method: 'GET' })
       progreso: job.progreso,
       etapa: job.etapa,
       error: job.error,
+      etaSegundos: job.etaSegundos,
+      clipsCompletados: job.clipsCompletados,
+      clipsTotales: job.clipsTotales,
     }
   })
 

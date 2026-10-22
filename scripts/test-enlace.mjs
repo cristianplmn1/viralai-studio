@@ -128,6 +128,45 @@ async function main() {
     }
   }
 
+  paso('1b. SSRF por redirección: una URL pública que salta a una IP interna')
+  const redirecciones = [
+    [
+      'http://httpbin.org/redirect-to?url=http://169.254.169.254/latest/meta-data/',
+      'redirección a metadatos de nube',
+    ],
+    [
+      'http://httpbin.org/redirect-to?url=http://127.0.0.1:3000/',
+      'redirección a loopback',
+    ],
+    [
+      'http://httpbin.org/redirect-to?url=http://192.168.0.1/',
+      'redirección a red privada',
+    ],
+  ]
+  for (const [url, etiqueta] of redirecciones) {
+    try {
+      await fn('fnImportarEnlace', {
+        url,
+        formatos: ['9:16'],
+        maxClips: 1,
+        duracionClip: 30,
+        subtitulos: true,
+        eliminarSilencios: true,
+        musica: false,
+      })
+      // Si la redirección no se valida, el trabajo se encola y falla luego.
+      // Lo damos por fumar si el proyecto llega a crearse.
+      fail(`permitió ${etiqueta}`)
+    } catch (error) {
+      const m = error instanceof Error ? error.message : String(error)
+      if (/interna|no permitida|no es un|proyecto no|vide[oó]/i.test(m)) {
+        ok(`bloqueado ${etiqueta}`)
+      } else {
+        fail(`error inesperado para ${etiqueta}: ${m.slice(0, 120)}`)
+      }
+    }
+  }
+
   paso('2. Importación de un MP4 remoto (URL pública real)')
   const url =
     process.env.TEST_VIDEO_URL ??

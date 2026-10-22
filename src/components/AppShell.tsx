@@ -35,6 +35,25 @@ export function AppShell({ children }: { children: ReactNode }) {
   const navegar = useNavigate()
   const [saliendo, setSaliendo] = useState(false)
   const [menuAbierto, setMenuAbierto] = useState(false)
+  const [conectando, setConectando] = useState<'youtube' | 'tiktok' | null>(null)
+  const [errorConexion, setErrorConexion] = useState<string | null>(null)
+
+  async function conectar(plataforma: 'youtube' | 'tiktok') {
+    setConectando(plataforma)
+    setErrorConexion(null)
+    try {
+      const { fnIniciarOAuth } = await import('~/server/api/conexion')
+      const { url } = await fnIniciarOAuth({ data: { plataforma } })
+      window.location.href = url
+    } catch (fallo) {
+      setErrorConexion(
+        fallo instanceof Error
+          ? fallo.message
+          : 'No se pudo iniciar la conexión.',
+      )
+      setConectando(null)
+    }
+  }
 
   async function cerrarSesion() {
     setSaliendo(true)
@@ -92,14 +111,23 @@ export function AppShell({ children }: { children: ReactNode }) {
               conectado={Boolean(conexion?.youtube)}
               detalle={conexion?.canal_youtube ?? null}
               color="#ff0033"
+              onConectar={() => void conectar('youtube')}
+              conectando={conectando === 'youtube'}
             />
             <FilaConexion
               plataforma="TikTok"
               conectado={Boolean(conexion?.tiktok)}
               detalle={conexion?.cuenta_tiktok ?? null}
               color="#25f4ee"
+              onConectar={() => void conectar('tiktok')}
+              conectando={conectando === 'tiktok'}
             />
           </div>
+          {errorConexion && (
+            <p className="mt-2 rounded-lg border border-rose-500/25 bg-rose-500/10 px-2.5 py-2 text-[11px] leading-snug text-rose-200">
+              {errorConexion}
+            </p>
+          )}
         </div>
 
         <div className="border-t border-ink-800 p-3">
@@ -212,14 +240,28 @@ function FilaConexion({
   conectado,
   detalle,
   color,
+  onConectar,
+  conectando,
 }: {
   plataforma: string
   conectado: boolean
   detalle: string | null
   color: string
+  onConectar: () => void
+  conectando: boolean
 }) {
   return (
-    <div className="flex items-center gap-2.5">
+    <button
+      type="button"
+      onClick={onConectar}
+      disabled={conectado || conectando}
+      title={
+        conectado
+          ? `${plataforma} ya está conectado`
+          : `Conectar ${plataforma}`
+      }
+      className="flex w-full items-center gap-2.5 rounded-lg px-1.5 py-1 text-left transition-colors hover:bg-ink-800/70 disabled:cursor-default disabled:hover:bg-transparent"
+    >
       <span
         className="h-2 w-2 shrink-0 rounded-full"
         style={{
@@ -232,9 +274,26 @@ function FilaConexion({
           {plataforma}
         </p>
         <p className="truncate text-[10px] text-mist-500">
-          {conectado ? (detalle ?? 'Conectado') : 'Sin conectar'}
+          {conectado
+            ? (detalle ?? 'Conectado')
+            : conectando
+              ? 'Conectando…'
+              : 'Conectar'}
         </p>
       </div>
-    </div>
+      {!conectado && !conectando && (
+        <svg
+          viewBox="0 0 24 24"
+          className="h-3.5 w-3.5 shrink-0 text-mist-500"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth={2}
+          strokeLinecap="round"
+          strokeLinejoin="round"
+        >
+          <path d="M9 18l6-6-6-6" />
+        </svg>
+      )}
+    </button>
   )
 }

@@ -88,6 +88,16 @@ intercambia el código por tokens, los cifra y los guarda en la fila del
 usuario. Nunca se exponen tokens al cliente: la UI solo recibe un booleano
 "conectado".
 
+**Para conectar una cuenta** hay que tener credenciales en el `.env`
+(`YOUTUBE_CLIENT_ID`/`YOUTUBE_CLIENT_SECRET` y/o
+`TIKTOK_CLIENT_KEY`/`TIKTOK_CLIENT_SECRET`) y reiniciar el servidor. Sin
+ellos, los botones lo dicen con claridad en vez de llevar a una página de
+error de Google.
+
+Los botones están en el **login** y también en el **panel lateral del
+dashboard**, porque un usuario que ya ha iniciado sesión no puede volver al
+login (le redirige).
+
 ---
 
 ## Cómo funciona el pipeline
@@ -174,12 +184,32 @@ npm run preview    # previsualiza el build
 npm start          # sirve el build de producción
 
 npm run typecheck  # tsc --noEmit
-npm run check:cliente # comprueba que ningún módulo de Node llega al navegador
+npm run check:cliente   # ningún módulo de Node llega al bundle del navegador
+npm run check:navegador # las páginas cargan e hidratan en un navegador real
 npm run test:e2e   # prueba de extremo a extremo contra el servidor
 npm run test:enlace # prueba de la importación por enlace (incluye SSRF)
 npm run fixture    # genera fixtures/demo.mp4 (vídeo de prueba)
 npm run tool:yt-dlp # descarga yt-dlp a .tools/
 ```
+
+### Por qué hay un check de navegador
+
+El HTML que genera el servidor puede ser **perfecto** y la página **estar rota**
+en el navegador: un `import` que falta, un error de hidratación o un fallo al
+ejecutar un efecto sólo se ven con JavaScript ejecutado. Cuzar eso con `curl`
+no es posible.
+
+`npm run check:navegador` abre Chrome/Edge en modo headless **con una sesión
+real** (se registra por la API y se inyecta la cookie por CDP) y comprueba que
+cada pantalla se renderiza, hidrata sin errores de JavaScript y que el botón
+de conectar con YouTube responde.
+
+### El fichero `.env`
+
+Se carga en el **servidor** (no sólo en producción: Vite sólo expone a
+`import.meta.env` las variables con prefijo `VITE_`). Se lee tolerando el BOM
+que ponen los editores de Windows. Si defines ahí las credenciales de OAuth,
+**reinicia el servidor**: las variables se leen al arrancar.
 
 ### El guardián de fugas al cliente
 

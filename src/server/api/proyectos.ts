@@ -107,13 +107,19 @@ export const fnImportarEnlace = createServerFn({ method: 'POST' })
     } = parsed.data
 
     const { sesion, repo } = await contexto()
-    const { validarUrlVideo } = await import('../pipeline/descarga')
+    const { validarUrlVideo, resolverRedirecciones } = await import(
+      '../pipeline/descarga'
+    )
     const { encolarImportacion } = await import('../pipeline/cola')
     const { ytDlpDisponible } = await import('../pipeline/descarga')
 
     // Validación inmediata: da error rápido si el enlace es inválido o apunta
     // a una dirección interna (protección SSRF).
     const validada = await validarUrlVideo(enlace)
+
+    // Resolvemos la cadena de redirecciones validando CADA salto: si acaba
+    // en una dirección interna se rechaza antes de crear el proyecto.
+    const resuelta = await resolverRedirecciones(validada.href)
 
     const proyecto = await repo.crearProyecto({
       usuario_id: sesion.uid,
@@ -123,7 +129,7 @@ export const fnImportarEnlace = createServerFn({ method: 'POST' })
       estado: 'procesando',
     })
 
-    const job = encolarImportacion(sesion, proyecto.id, validada.href, {
+    const job = encolarImportacion(sesion, proyecto.id, resuelta, {
       formatos,
       maximoClips: maxClips,
       duracionClip,
